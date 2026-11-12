@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>English to Chinese Voice Translator</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f6fb; margin: 0; padding: 2rem; display: flex; justify-content: center; }
+  .card { background: #fff; max-width: 600px; width: 100%; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  h1 { margin-top: 0; font-size: 1.5rem; }
+  button { font-size: 1.1rem; padding: .8rem 1.6rem; border: none; border-radius: 999px; background: #3b6cf6; color: #fff; cursor: pointer; }
+  button.listening { background: #e5484d; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .box { margin-top: 1.5rem; padding: 1rem; border-radius: 10px; background: #f0f2f8; min-height: 3rem; }
+  .label { font-size: .8rem; color: #667; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .3rem; }
+  .zh { font-size: 1.6rem; }
+  #status { margin-top: 1rem; color: #667; font-size: .9rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>English → 中文 Voice Translator</h1>
+  <button id="micBtn">🎤 Start speaking</button>
+  <button id="replayBtn" disabled>🔊 Replay Chinese</button>
+
+  <div class="box">
+    <div class="label">You said (English)</div>
+    <div id="english">--</div>
+  </div>
+  <div class="box">
+    <div class="label">Translation (简体中文)</div>
+    <div id="chinese" class="zh">--</div>
+  </div>
+  <div id="status">Ready.</div>
+</div>
+
+<script>
+const micBtn = document.getElementById('micBtn');
+const replayBtn = document.getElementById('replayBtn');
+const englishEl = document.getElementById('english');
+const chineseEl = document.getElementById('chinese');
+const statusEl = document.getElementById('status');
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SpeechRecognition) {
+  statusEl.textContent = 'Speech recognition is not supported. Please use Chrome or Edge.';
+  micBtn.disabled = true;
+}
+
+let lastChinese = '';
+let recognition;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    micBtn.classList.add('listening');
+    micBtn.textContent = '🎙️ Listening...';
+    statusEl.textContent = 'Listening -- speak English now.';
+  };
+
+  recognition.onend = () => {
+    micBtn.classList.remove('listening');
+    micBtn.textContent = '🎤 Start speaking';
+  };
+
+  recognition.onerror = (e) => {
+    statusEl.textContent = 'Mic error: ' + e.error;
+  };
+
+  recognition.onresult = async (event) => {
+    const text = event.results[0][0].transcript;
+    englishEl.textContent = text;
+    statusEl.textContent = 'Translating...';
+    try {
+      const zh = await translateToChinese(text);
+      lastChinese = zh;
+      chineseEl.textContent = zh;
+      replayBtn.disabled = false;
+      statusEl.textContent = 'Speaking Chinese...';
+      speakChinese(zh);
+    } catch (err) {
+      statusEl.textContent = 'Translation failed: ' + err.message;
+    }
+  };
+}
+
+async function translateToChinese(text) {
+  // Try Google's free endpoint first
+  try {
+    const gUrl = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=' + encodeURIComponent(text);
+    const gRes = await fetch(gUrl);
+    if (gRes.ok) {
+      const gData = await gRes.json();
+      const out = gData[0].map(part => part[0]).join('');
+      if (out) return out;
+    }
+  } catch (e) { /* fall through to backup */ }
+
+  // Backup: MyMemory with an explicit language pair
+  const params = new URLSearchParams({ q: text, langpair: 'en-US|zh-CN' });
+  const res = await fetch('https://api.mymemory.translated.net/get?' + params.toString());
+  if (!res.ok) throw new Error('Network error');
+  const data = await res.json();
+  if (data.responseStatus !== 200) throw new Error(data.responseDetails || 'Translation failed'));
+  return data.responseData.translatedText;
+}
+
+function speakChinese(text) {
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'zh-CN';
+  const voices = window.speechSynthesis.getVoices();
+  const zhVoice = voices.find(v => v.lang.toLowerCase().startsWith('zh-cn')) ||
+                  voices.find(v => v.lang.toLowerCase().startsWith('zh'));
+  if (zhVoice) utter.voice = zhVoice;
+  utter.onend = () => { statusEl.textContent = 'Done. Speak again anytime.'; };
+  window.speechSynthesis.speak(utter);
+}
+
+micBtn.addEventListener('click', () => {
+  window.speechSynthesis.cancel();
+  recognition.start();
+});
+
+replayBtn.addEventListener('click', () => {
+  if (lastChinese) speakChinese(lastChinese);
+});
+
+window.speechSynthesis.onvoiceschanged = () => {};
+</script>
+</body>
+</html>
